@@ -276,7 +276,7 @@
       letter-spacing: 0.02em;
     }
 
-    /* Drawer / Modal for Switching Handles */
+    /* Drawer / Modal for Switching Handles and Lists */
     #menu-modal {
       display: none;
       position: absolute;
@@ -308,12 +308,14 @@
       display: flex;
       gap: 10px;
       margin-bottom: 20px;
+      flex-wrap: wrap;
     }
 
     #handle-input {
       flex: 1;
+      min-width: 240px;
       padding: 8px 12px;
-      font-size: 22px;
+      font-size: 21px;
       border: 2px solid #000000;
       font-family: inherit;
     }
@@ -371,7 +373,7 @@
   <!-- Top Bar -->
   <header id="top-bar">
     <div class="header-left">
-      <button class="btn" id="btn-menu" aria-label="Open accounts menu">≡ Accounts</button>
+      <button class="btn" id="btn-menu" aria-label="Open accounts menu">≡ Search / Lists</button>
       <span id="profile-title" class="interactive-element">@karpathy</span>
       <button class="btn" id="btn-star" title="Save/remove favorite">☆</button>
     </div>
@@ -425,19 +427,44 @@
   </footer>
 </div>
 
-<!-- Account Selection Drawer -->
+<!-- Search, Accounts & Lists Selection Drawer -->
 <div id="menu-modal">
   <div class="modal-header">
-    <h2>Select X Account</h2>
+    <h2>Search Terms, Feeds & Lists</h2>
     <button class="btn" id="btn-close-menu">Close ✕</button>
   </div>
 
   <div class="handle-input-row">
-    <input type="text" id="handle-input" placeholder="Enter handle (e.g. sama)" autocorrect="off" autocapitalize="none">
+    <input type="text" id="handle-input" placeholder="Search term, @handle, or list (e.g. sama, elonmusk)" autocorrect="off" autocapitalize="none">
+    <button class="btn" id="btn-search-term">Search Term</button>
     <button class="btn" id="btn-load-handle">Load Feed</button>
   </div>
 
-  <div class="section-title">Saved Favorites:</div>
+  <div id="search-results-section" style="display:none; margin-bottom: 22px;">
+    <div class="section-title">Search Results:</div>
+    <div class="chip-container" id="search-results-container"></div>
+  </div>
+
+  <div class="section-title">Curated & Custom Lists:</div>
+  <div class="chip-container" id="lists-container"></div>
+
+  <div id="new-list-drawer" style="display:none; border:2px solid #000000; padding:14px; margin-bottom:20px; background:#FFFFFF;">
+    <div style="font-weight:bold; margin-bottom:8px; font-size:18px;">Create Custom List:</div>
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      <input type="text" id="list-name-input" placeholder="List name (e.g. AI Pioneers)" style="padding:8px; font-size:18px; border:2px solid #000; font-family:inherit;">
+      <input type="text" id="list-handles-input" placeholder="Handles (e.g. karpathy, sama, ylecun)" style="padding:8px; font-size:18px; border:2px solid #000; font-family:inherit;">
+      <div style="display:flex; gap:10px;">
+        <button class="btn" id="btn-save-new-list">Save List</button>
+        <button class="btn" id="btn-cancel-new-list">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-bottom: 22px;">
+    <button class="btn" id="btn-toggle-new-list">+ Create Custom List</button>
+  </div>
+
+  <div class="section-title">Saved Favorite Accounts:</div>
   <div class="chip-container" id="favorites-container"></div>
 
   <div class="section-title">Suggested Feeds:</div>
@@ -460,7 +487,7 @@
 /**
  * Kindle X Deck Controller (Universal ES5 / Zero-Server)
  * Fully compatible with legacy Kindle WebKit and modern browsers alike.
- * Zero ES6 class, zero async/await, zero optional chaining, safe XHR networking.
+ * Features search terms with typeahead, multi-account lists, and discrete page navigation.
  */
 
 // On-screen diagnostic handler for Kindle debugging
@@ -496,6 +523,10 @@ var SafeStorage = {
 function KindleDeckApp() {
   this.currentHandle = SafeStorage.get('kindle_x_handle', 'karpathy');
   this.favorites = this.loadFavorites();
+  this.lists = this.loadLists();
+  this.isListMode = false;
+  this.currentListName = '';
+  this.currentListHandles = [];
   this.tweets = [];
   this.currentIndex = 0;
   this.nextCursor = null;
@@ -520,13 +551,24 @@ function KindleDeckApp() {
   this.menuModalEl = document.getElementById('menu-modal');
   this.btnStarEl = document.getElementById('btn-star');
   this.favoritesContainerEl = document.getElementById('favorites-container');
+  this.listsContainerEl = document.getElementById('lists-container');
   this.btnPrevEl = document.getElementById('btn-prev');
   this.btnNextEl = document.getElementById('btn-next');
 
   this.initEventListeners();
   this.renderFavorites();
-  this.updateStarButton();
-  this.loadProfile(this.currentHandle);
+  this.renderLists();
+
+  var activeMode = SafeStorage.get('kindle_x_active_mode', 'profile');
+  if (activeMode === 'list') {
+    var savedName = SafeStorage.get('kindle_x_list_name', 'AI & LLMs');
+    var rawHandles = SafeStorage.get('kindle_x_list_handles', null);
+    var savedHandles = rawHandles ? JSON.parse(rawHandles) : ['karpathy', 'sama', 'ylecun'];
+    this.loadList(savedName, savedHandles);
+  } else {
+    this.updateStarButton();
+    this.loadProfile(this.currentHandle);
+  }
 }
 
 KindleDeckApp.prototype.loadFavorites = function() {
@@ -563,7 +605,61 @@ KindleDeckApp.prototype.toggleFavorite = function(handle) {
   this.saveFavorites();
 };
 
+KindleDeckApp.prototype.loadLists = function() {
+  var raw = SafeStorage.get('kindle_x_lists', null);
+  if (raw) {
+    try {
+      var parsed = JSON.parse(raw);
+      if (parsed && parsed.length > 0) return parsed;
+    } catch (e) {}
+  }
+  return [
+    { name: 'AI & LLMs', handles: ['karpathy', 'sama', 'ylecun', 'simonw', 'OpenAI'] },
+    { name: 'Tech Leaders', handles: ['elonmusk', 'sama', 'pmarca', 'paulg'] },
+    { name: 'Space & Sci', handles: ['NASA', 'SpaceX'] }
+  ];
+};
+
+KindleDeckApp.prototype.saveLists = function() {
+  SafeStorage.set('kindle_x_lists', JSON.stringify(this.lists));
+  this.renderLists();
+};
+
+KindleDeckApp.prototype.renderLists = function() {
+  var self = this;
+  if (!this.listsContainerEl) return;
+  this.listsContainerEl.innerHTML = '';
+
+  for (var i = 0; i < this.lists.length; i++) {
+    (function(list, idx) {
+      var chip = document.createElement('div');
+      chip.className = 'chip';
+      chip.innerHTML = '<span>[List] ' + list.name + ' (' + list.handles.length + ')</span>' +
+        (idx >= 3 ? '<span class="chip-del" title="Delete List">✕</span>' : '');
+
+      chip.getElementsByTagName('span')[0].onclick = function() {
+        self.closeMenu();
+        self.loadList(list.name, list.handles);
+      };
+
+      var delBtn = chip.querySelector('.chip-del');
+      if (delBtn) {
+        delBtn.onclick = function(e) {
+          if (e && e.stopPropagation) e.stopPropagation();
+          self.lists.splice(idx, 1);
+          self.saveLists();
+        };
+      }
+      self.listsContainerEl.appendChild(chip);
+    })(this.lists[i], i);
+  }
+};
+
 KindleDeckApp.prototype.updateStarButton = function() {
+  if (this.isListMode) {
+    if (this.btnStarEl) this.btnStarEl.textContent = '★';
+    return;
+  }
   var isFav = false;
   var currentLower = this.currentHandle.toLowerCase();
   for (var i = 0; i < this.favorites.length; i++) {
@@ -621,7 +717,13 @@ KindleDeckApp.prototype.initEventListeners = function() {
   if (btnClean) btnClean.onclick = function() { self.flushScreen(); };
 
   // Star button
-  if (this.btnStarEl) this.btnStarEl.onclick = function() { self.toggleFavorite(self.currentHandle); };
+  if (this.btnStarEl) {
+    this.btnStarEl.onclick = function() {
+      if (!self.isListMode) {
+        self.toggleFavorite(self.currentHandle);
+      }
+    };
+  }
 
   // Menu button
   var btnMenu = document.getElementById('btn-menu');
@@ -631,14 +733,75 @@ KindleDeckApp.prototype.initEventListeners = function() {
   var btnCloseMenu = document.getElementById('btn-close-menu');
   if (btnCloseMenu) btnCloseMenu.onclick = function() { self.closeMenu(); };
 
+  // Search Term Button
+  var btnSearchTerm = document.getElementById('btn-search-term');
+  if (btnSearchTerm) {
+    btnSearchTerm.onclick = function() {
+      var input = document.getElementById('handle-input');
+      var val = input ? input.value : '';
+      if (val) {
+        self.searchTerms(val);
+      }
+    };
+  }
+
+  // Load Feed Button
   var btnLoadHandle = document.getElementById('btn-load-handle');
   if (btnLoadHandle) {
     btnLoadHandle.onclick = function() {
-      var input = document.getElementById('handle-input');
-      var val = input ? input.value.replace(/^@/, '').replace(/\s+/g, '') : '';
-      if (val) {
-        self.closeMenu();
-        self.loadProfile(val);
+      self.handleSmartSubmit();
+    };
+  }
+
+  // Enter key on input field
+  var handleInput = document.getElementById('handle-input');
+  if (handleInput) {
+    handleInput.onkeydown = function(e) {
+      var key = e.key || e.keyCode;
+      if (key === 'Enter' || key === 13) {
+        self.handleSmartSubmit();
+      }
+    };
+  }
+
+  // New List Drawer Toggles
+  var btnToggleNewList = document.getElementById('btn-toggle-new-list');
+  var newListDrawer = document.getElementById('new-list-drawer');
+  if (btnToggleNewList && newListDrawer) {
+    btnToggleNewList.onclick = function() {
+      var isHidden = (newListDrawer.style.display === 'none');
+      newListDrawer.style.display = isHidden ? 'block' : 'none';
+    };
+  }
+
+  var btnCancelNewList = document.getElementById('btn-cancel-new-list');
+  if (btnCancelNewList && newListDrawer) {
+    btnCancelNewList.onclick = function() {
+      newListDrawer.style.display = 'none';
+    };
+  }
+
+  var btnSaveNewList = document.getElementById('btn-save-new-list');
+  if (btnSaveNewList) {
+    btnSaveNewList.onclick = function() {
+      var nameInp = document.getElementById('list-name-input');
+      var handlesInp = document.getElementById('list-handles-input');
+      var nameVal = nameInp ? nameInp.value.replace(/^\s+|\s+$/g, '') : '';
+      var handlesVal = handlesInp ? handlesInp.value : '';
+      if (nameVal && handlesVal) {
+        var rawParts = handlesVal.split(/[,;\s]+/);
+        var handlesList = [];
+        for (var p = 0; p < rawParts.length; p++) {
+          var cleanH = rawParts[p].replace(/^@/, '').replace(/\s+/g, '');
+          if (cleanH) handlesList.push(cleanH);
+        }
+        if (handlesList.length > 0) {
+          self.lists.push({ name: nameVal, handles: handlesList });
+          self.saveLists();
+          if (newListDrawer) newListDrawer.style.display = 'none';
+          self.closeMenu();
+          self.loadList(nameVal, handlesList);
+        }
       }
     };
   }
@@ -689,8 +852,125 @@ KindleDeckApp.prototype.initEventListeners = function() {
   };
 };
 
+KindleDeckApp.prototype.handleSmartSubmit = function() {
+  var input = document.getElementById('handle-input');
+  var raw = input ? input.value.replace(/^\s+|\s+$/g, '') : '';
+  if (!raw) return;
+
+  // Multi-account comma-separated list
+  if (raw.indexOf(',') >= 0) {
+    var parts = raw.split(',');
+    var handles = [];
+    for (var i = 0; i < parts.length; i++) {
+      var h = parts[i].replace(/^@/, '').replace(/\s+/g, '');
+      if (h) handles.push(h);
+    }
+    if (handles.length > 0) {
+      this.closeMenu();
+      this.loadList('Custom List', handles);
+      return;
+    }
+  }
+
+  // Multiple words without comma -> Search term
+  if (raw.indexOf(' ') >= 0 && raw.indexOf('@') !== 0) {
+    this.searchTerms(raw);
+    return;
+  }
+
+  // Single handle
+  var cleanHandle = raw.replace(/^@/, '').replace(/\s+/g, '');
+  this.closeMenu();
+  this.loadProfile(cleanHandle);
+};
+
+KindleDeckApp.prototype.searchTerms = function(query) {
+  var self = this;
+  var clean = query.replace(/^\s+|\s+$/g, '');
+  if (!clean) return;
+
+  var section = document.getElementById('search-results-section');
+  var container = document.getElementById('search-results-container');
+  if (section) section.style.display = 'block';
+  if (container) {
+    container.innerHTML = '<span style="font-size:18px;color:#333;">Searching X for "' + clean + '"...</span>';
+  }
+
+  var url = 'https://api.fxtwitter.com/2/typeahead?q=' + encodeURIComponent(clean);
+  this.sendXHR(url, 12000, function(data) {
+    self.renderSearchResults(clean, data);
+  }, function() {
+    if (container) {
+      container.innerHTML = '<span style="font-size:18px;color:#000;">Could not reach search for "' + clean + '". ' +
+        '<button class="btn" id="btn-force-profile" style="margin-left:8px;">Load @' + clean + '</button></span>';
+      var btn = document.getElementById('btn-force-profile');
+      if (btn) {
+        btn.onclick = function() {
+          self.closeMenu();
+          self.loadProfile(clean);
+        };
+      }
+    }
+  });
+};
+
+KindleDeckApp.prototype.renderSearchResults = function(query, data) {
+  var self = this;
+  var container = document.getElementById('search-results-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  var users = (data && data.users) ? data.users : [];
+  if (users.length === 0) {
+    container.innerHTML = '<span style="font-size:18px;color:#333;">No matching accounts found for "' + query + '". ' +
+      '<button class="btn" id="btn-force-profile" style="margin-left:8px;">Load @' + query + '</button></span>';
+    var btn = document.getElementById('btn-force-profile');
+    if (btn) {
+      btn.onclick = function() {
+        self.closeMenu();
+        self.loadProfile(query);
+      };
+    }
+    return;
+  }
+
+  // Top matching accounts array for combined deck
+  var topHandles = [];
+  for (var i = 0; i < Math.min(users.length, 5); i++) {
+    topHandles.push(users[i].screen_name);
+  }
+
+  // Offer Combined Topic Deck
+  var combinedChip = document.createElement('div');
+  combinedChip.className = 'chip';
+  combinedChip.style.background = '#000000';
+  combinedChip.style.color = '#FFFFFF';
+  combinedChip.innerHTML = '<span>[+] <strong>Read Combined Topic Feed (' + topHandles.length + ' accounts)</strong></span>';
+  combinedChip.onclick = function() {
+    self.closeMenu();
+    self.loadList('Topic: ' + query, topHandles);
+  };
+  container.appendChild(combinedChip);
+
+  // Individual matching account chips
+  for (var u = 0; u < users.length; u++) {
+    (function(user) {
+      var chip = document.createElement('div');
+      chip.className = 'chip';
+      chip.innerHTML = '<span><strong>@' + user.screen_name + '</strong> (' + user.name + ')</span>';
+      chip.onclick = function() {
+        self.closeMenu();
+        self.loadProfile(user.screen_name);
+      };
+      container.appendChild(chip);
+    })(users[u]);
+  }
+};
+
 KindleDeckApp.prototype.loadProfile = function(handle) {
+  this.isListMode = false;
   this.currentHandle = handle.replace(/^@/, '').replace(/\s+/g, '');
+  SafeStorage.set('kindle_x_active_mode', 'profile');
   SafeStorage.set('kindle_x_handle', this.currentHandle);
   if (this.profileTitleEl) this.profileTitleEl.textContent = '@' + this.currentHandle;
   this.updateStarButton();
@@ -710,6 +990,82 @@ KindleDeckApp.prototype.loadProfile = function(handle) {
   this.updateNavButtons();
 
   this.fetchTweets();
+};
+
+KindleDeckApp.prototype.loadList = function(listName, handles) {
+  var self = this;
+  this.isListMode = true;
+  this.currentListName = listName;
+  this.currentListHandles = handles;
+  SafeStorage.set('kindle_x_active_mode', 'list');
+  SafeStorage.set('kindle_x_list_name', listName);
+  SafeStorage.set('kindle_x_list_handles', JSON.stringify(handles));
+
+  if (this.profileTitleEl) this.profileTitleEl.textContent = '[List] ' + listName;
+  this.updateStarButton();
+  this.tweets = [];
+  this.currentIndex = 0;
+  this.nextCursor = null;
+
+  if (this.authorNameEl) this.authorNameEl.textContent = 'Loading List...';
+  if (this.authorHandleEl) this.authorHandleEl.textContent = handles.length + ' accounts';
+  if (this.tweetDateEl) this.tweetDateEl.textContent = '';
+  if (this.metricsInfoEl) this.metricsInfoEl.textContent = '';
+  if (this.partBadgeEl) this.partBadgeEl.style.display = 'none';
+  if (this.quoteBoxEl) this.quoteBoxEl.style.display = 'none';
+  if (this.mediaBoxEl) this.mediaBoxEl.style.display = 'none';
+  if (this.pageIndicatorEl) this.pageIndicatorEl.textContent = '0 / 0';
+  if (this.tweetTextEl) {
+    this.tweetTextEl.innerHTML = 'Fetching list <strong>' + listName + '</strong> (' + handles.join(', ') + ')...';
+  }
+  this.updateNavButtons();
+
+  var pending = handles.length;
+  var allTweets = [];
+
+  for (var i = 0; i < handles.length; i++) {
+    (function(h) {
+      var clean = h.replace(/^@/, '').replace(/\s+/g, '');
+      var url = 'https://api.fxtwitter.com/2/profile/' + encodeURIComponent(clean) + '/statuses';
+      self.sendXHR(url, 15000, function(data) {
+        if (data && data.results && data.results.length > 0) {
+          for (var r = 0; r < data.results.length; r++) {
+            allTweets.push(data.results[r]);
+          }
+        }
+        pending--;
+        if (pending === 0) {
+          self.finishListLoad(listName, allTweets);
+        }
+      }, function() {
+        pending--;
+        if (pending === 0) {
+          self.finishListLoad(listName, allTweets);
+        }
+      });
+    })(handles[i]);
+  }
+};
+
+KindleDeckApp.prototype.finishListLoad = function(listName, rawTweets) {
+  if (rawTweets.length === 0) {
+    if (this.authorNameEl) this.authorNameEl.textContent = 'Notice';
+    if (this.tweetTextEl) {
+      this.tweetTextEl.innerHTML = '<strong>No tweets found for list "' + listName + '".</strong><br><br>' +
+        'Please check that the handles in this list are active public accounts.';
+    }
+    this.updateNavButtons();
+    return;
+  }
+
+  // Sort descending by timestamp
+  rawTweets.sort(function(a, b) {
+    var timeA = a.created_timestamp || (a.created_at ? new Date(a.created_at).getTime() : 0);
+    var timeB = b.created_timestamp || (b.created_at ? new Date(b.created_at).getTime() : 0);
+    return timeB - timeA;
+  });
+
+  this.handleData({ results: rawTweets, cursor: null });
 };
 
 KindleDeckApp.prototype.fetchTweets = function(callback) {
@@ -818,10 +1174,10 @@ KindleDeckApp.prototype.sendXHR = function(url, timeoutMs, onSuccess, onError) {
 KindleDeckApp.prototype.handleData = function(data) {
   if (!data || !data.results || data.results.length === 0) {
     if (this.tweets.length === 0) {
-      if (this.authorNameEl) this.authorNameEl.textContent = '@' + this.currentHandle;
+      if (this.authorNameEl) this.authorNameEl.textContent = this.isListMode ? this.currentListName : ('@' + this.currentHandle);
       if (this.tweetDateEl) this.tweetDateEl.textContent = '';
       if (this.metricsInfoEl) this.metricsInfoEl.textContent = '0 tweets';
-      if (this.tweetTextEl) this.tweetTextEl.textContent = 'No tweets found for @' + this.currentHandle + '.';
+      if (this.tweetTextEl) this.tweetTextEl.textContent = 'No tweets found.';
       this.updateNavButtons();
     }
     return;
@@ -977,8 +1333,8 @@ KindleDeckApp.prototype.renderCurrentTweet = function() {
   this.updatePageIndicator();
   this.updateNavButtons();
 
-  // Prefetch when reaching near end
-  if (this.nextCursor && this.currentIndex >= this.tweets.length - 5 && !this.isLoading) {
+  // Prefetch when reaching near end in profile mode
+  if (!this.isListMode && this.nextCursor && this.currentIndex >= this.tweets.length - 5 && !this.isLoading) {
     this.fetchTweets();
   }
 };
@@ -1029,7 +1385,7 @@ KindleDeckApp.prototype.next = function() {
   if (this.currentIndex < this.tweets.length - 1) {
     this.currentIndex++;
     this.renderCurrentTweet();
-  } else if (this.nextCursor && !this.isLoading) {
+  } else if (!this.isListMode && this.nextCursor && !this.isLoading) {
     this.fetchTweets(function() {
       if (self.currentIndex < self.tweets.length - 1) {
         self.currentIndex++;
@@ -1064,7 +1420,9 @@ KindleDeckApp.prototype.openMenu = function() {
   if (this.menuModalEl) {
     this.menuModalEl.className = 'active';
     var inp = document.getElementById('handle-input');
-    if (inp) inp.value = this.currentHandle;
+    if (inp) {
+      inp.value = this.isListMode ? this.currentListName : this.currentHandle;
+    }
   }
 };
 
