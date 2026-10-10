@@ -3,11 +3,12 @@
 <!--
   x-kindel-interface: Core E-Ink Web Deck Reader (Zero-Server / Client-First)
   Zero-scroll, discrete page-by-page reader for X (Twitter) optimized for Kindle displays.
-  Directly fetches structured feeds via api.fxtwitter.com with CORS: * (Track 1).
+  Directly fetches structured feeds via api.fxtwitter.com with universal ES5 & XHR support.
 -->
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="referrer" content="no-referrer">
   <title>Kindle X Reader</title>
   <style>
     /* Strict E-Ink Reset: Zero animations, pure black/white contrast */
@@ -32,6 +33,19 @@
       line-height: 1.5;
       user-select: none;
       -webkit-user-select: none;
+    }
+
+    /* Diagnostics banner (hidden by default) */
+    #debug-banner {
+      display: none;
+      background: #000000;
+      color: #FFFFFF;
+      padding: 6px 12px;
+      font-size: 14px;
+      font-family: monospace;
+      word-break: break-all;
+      border-bottom: 2px solid #000000;
+      z-index: 999;
     }
 
     /* Fixed Deck Layout Container */
@@ -71,6 +85,8 @@
       font-weight: bold;
       cursor: pointer;
       min-height: 40px;
+      display: inline-block;
+      text-decoration: none;
     }
 
     .btn:active {
@@ -349,6 +365,8 @@
 </head>
 <body>
 
+<div id="debug-banner"></div>
+
 <div id="app-container">
   <!-- Top Bar -->
   <header id="top-bar">
@@ -375,14 +393,14 @@
     <article id="card-content">
       <div id="author-box">
         <div>
-          <span id="author-name">Loading...</span>
+          <span id="author-name">Connecting...</span>
           <span id="author-handle">@...</span>
           <span id="part-badge">1/1</span>
         </div>
         <div id="tweet-date">--:--</div>
       </div>
 
-      <div id="tweet-text-box">Fetching latest tweets directly from X...</div>
+      <div id="tweet-text-box" class="interactive-element">Connecting to X...</div>
 
       <!-- Quoted Tweet -->
       <div id="quote-box">
@@ -392,7 +410,7 @@
 
       <!-- Media Attachment -->
       <div id="media-box" class="interactive-element">
-        <button class="btn" id="btn-toggle-img">[📷 Show Image]</button>
+        <button class="btn" id="btn-toggle-img">[+ View Image]</button>
         <img id="media-img" alt="Tweet media attachment">
         <div id="media-alt"></div>
       </div>
@@ -440,468 +458,639 @@
 
 <script>
 /**
- * Kindle X Deck Controller (Track 1: Pure Client-Side Zero Server)
- * Manages in-memory tweet buffer, note-tweet chunking, and cursor prefetching.
+ * Kindle X Deck Controller (Universal ES5 / Zero-Server)
+ * Fully compatible with legacy Kindle WebKit and modern browsers alike.
+ * Zero ES6 class, zero async/await, zero optional chaining, safe XHR networking.
  */
-class KindleDeckApp {
-  constructor() {
-    this.currentHandle = localStorage.getItem('kindle_x_handle') || 'karpathy';
-    this.favorites = this.loadFavorites();
-    this.tweets = [];
-    this.currentIndex = 0;
-    this.nextCursor = null;
-    this.isLoading = false;
 
-    // DOM Elements
-    this.authorNameEl = document.getElementById('author-name');
-    this.authorHandleEl = document.getElementById('author-handle');
-    this.partBadgeEl = document.getElementById('part-badge');
-    this.tweetDateEl = document.getElementById('tweet-date');
-    this.tweetTextEl = document.getElementById('tweet-text-box');
-    this.quoteBoxEl = document.getElementById('quote-box');
-    this.quoteAuthorEl = document.getElementById('quote-author');
-    this.quoteTextEl = document.getElementById('quote-text');
-    this.mediaBoxEl = document.getElementById('media-box');
-    this.mediaImgEl = document.getElementById('media-img');
-    this.mediaAltEl = document.getElementById('media-alt');
-    this.btnToggleImgEl = document.getElementById('btn-toggle-img');
-    this.pageIndicatorEl = document.getElementById('page-indicator');
-    this.profileTitleEl = document.getElementById('profile-title');
-    this.metricsInfoEl = document.getElementById('metrics-info');
-    this.menuModalEl = document.getElementById('menu-modal');
-    this.btnStarEl = document.getElementById('btn-star');
-    this.favoritesContainerEl = document.getElementById('favorites-container');
-
-    this.initEventListeners();
-    this.renderFavorites();
-    this.updateStarButton();
-    this.loadProfile(this.currentHandle);
+// On-screen diagnostic handler for Kindle debugging
+window.onerror = function(msg, url, line) {
+  var banner = document.getElementById('debug-banner');
+  if (banner) {
+    banner.style.display = 'block';
+    banner.textContent = 'Kindle JS Notice: ' + msg + ' (line ' + line + ')';
   }
+  return false;
+};
 
-  loadFavorites() {
-    const raw = localStorage.getItem('kindle_x_favorites');
-    if (raw) {
-      try { return JSON.parse(raw); } catch (e) {}
+// Safe storage wrapper protecting against Kindle SecurityError
+var SafeStorage = {
+  get: function(key, fallback) {
+    try {
+      if (window.localStorage) {
+        var val = window.localStorage.getItem(key);
+        return val !== null ? val : fallback;
+      }
+    } catch (e) {}
+    return fallback;
+  },
+  set: function(key, val) {
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem(key, val);
+      }
+    } catch (e) {}
+  }
+};
+
+function KindleDeckApp() {
+  this.currentHandle = SafeStorage.get('kindle_x_handle', 'karpathy');
+  this.favorites = this.loadFavorites();
+  this.tweets = [];
+  this.currentIndex = 0;
+  this.nextCursor = null;
+  this.isLoading = false;
+
+  // DOM Elements
+  this.authorNameEl = document.getElementById('author-name');
+  this.authorHandleEl = document.getElementById('author-handle');
+  this.partBadgeEl = document.getElementById('part-badge');
+  this.tweetDateEl = document.getElementById('tweet-date');
+  this.tweetTextEl = document.getElementById('tweet-text-box');
+  this.quoteBoxEl = document.getElementById('quote-box');
+  this.quoteAuthorEl = document.getElementById('quote-author');
+  this.quoteTextEl = document.getElementById('quote-text');
+  this.mediaBoxEl = document.getElementById('media-box');
+  this.mediaImgEl = document.getElementById('media-img');
+  this.mediaAltEl = document.getElementById('media-alt');
+  this.btnToggleImgEl = document.getElementById('btn-toggle-img');
+  this.pageIndicatorEl = document.getElementById('page-indicator');
+  this.profileTitleEl = document.getElementById('profile-title');
+  this.metricsInfoEl = document.getElementById('metrics-info');
+  this.menuModalEl = document.getElementById('menu-modal');
+  this.btnStarEl = document.getElementById('btn-star');
+  this.favoritesContainerEl = document.getElementById('favorites-container');
+  this.btnPrevEl = document.getElementById('btn-prev');
+  this.btnNextEl = document.getElementById('btn-next');
+
+  this.initEventListeners();
+  this.renderFavorites();
+  this.updateStarButton();
+  this.loadProfile(this.currentHandle);
+}
+
+KindleDeckApp.prototype.loadFavorites = function() {
+  var raw = SafeStorage.get('kindle_x_favorites', null);
+  if (raw) {
+    try {
+      var parsed = JSON.parse(raw);
+      if (parsed && parsed.length > 0) return parsed;
+    } catch (e) {}
+  }
+  return ['karpathy', 'sama', 'elonmusk', 'ylecun', 'OpenAI'];
+};
+
+KindleDeckApp.prototype.saveFavorites = function() {
+  SafeStorage.set('kindle_x_favorites', JSON.stringify(this.favorites));
+  this.renderFavorites();
+  this.updateStarButton();
+};
+
+KindleDeckApp.prototype.toggleFavorite = function(handle) {
+  var clean = handle.replace(/^@/, '');
+  var idx = -1;
+  for (var i = 0; i < this.favorites.length; i++) {
+    if (this.favorites[i].toLowerCase() === clean.toLowerCase()) {
+      idx = i;
+      break;
     }
-    return ['karpathy', 'sama', 'elonmusk', 'ylecun', 'OpenAI'];
   }
-
-  saveFavorites() {
-    localStorage.setItem('kindle_x_favorites', JSON.stringify(this.favorites));
-    this.renderFavorites();
-    this.updateStarButton();
+  if (idx >= 0) {
+    this.favorites.splice(idx, 1);
+  } else {
+    this.favorites.push(clean);
   }
+  this.saveFavorites();
+};
 
-  toggleFavorite(handle) {
-    const clean = handle.replace(/^@/, '');
-    const idx = this.favorites.indexOf(clean);
-    if (idx >= 0) {
-      this.favorites.splice(idx, 1);
-    } else {
-      this.favorites.push(clean);
+KindleDeckApp.prototype.updateStarButton = function() {
+  var isFav = false;
+  var currentLower = this.currentHandle.toLowerCase();
+  for (var i = 0; i < this.favorites.length; i++) {
+    if (this.favorites[i].toLowerCase() === currentLower) {
+      isFav = true;
+      break;
     }
-    this.saveFavorites();
   }
-
-  updateStarButton() {
-    const isFav = this.favorites.includes(this.currentHandle);
+  if (this.btnStarEl) {
     this.btnStarEl.textContent = isFav ? '★' : '☆';
   }
+};
 
-  renderFavorites() {
-    this.favoritesContainerEl.innerHTML = '';
-    if (this.favorites.length === 0) {
-      this.favoritesContainerEl.innerHTML = '<span style="font-size:16px;color:#444;">No favorites saved yet.</span>';
-      return;
-    }
-    this.favorites.forEach(handle => {
-      const chip = document.createElement('div');
+KindleDeckApp.prototype.renderFavorites = function() {
+  var self = this;
+  if (!this.favoritesContainerEl) return;
+  this.favoritesContainerEl.innerHTML = '';
+  if (this.favorites.length === 0) {
+    this.favoritesContainerEl.innerHTML = '<span style="font-size:16px;color:#444;">No favorites saved yet.</span>';
+    return;
+  }
+  for (var i = 0; i < this.favorites.length; i++) {
+    (function(handle) {
+      var chip = document.createElement('div');
       chip.className = 'chip';
-      chip.innerHTML = `<span>@${handle}</span><span class="chip-del" title="Remove">✕</span>`;
-      chip.querySelector('span').addEventListener('click', () => {
-        this.closeMenu();
-        this.loadProfile(handle);
-      });
-      chip.querySelector('.chip-del').addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.toggleFavorite(handle);
-      });
-      this.favoritesContainerEl.appendChild(chip);
-    });
+      chip.innerHTML = '<span>@' + handle + '</span><span class="chip-del" title="Remove">✕</span>';
+      chip.getElementsByTagName('span')[0].onclick = function() {
+        self.closeMenu();
+        self.loadProfile(handle);
+      };
+      chip.getElementsByTagName('span')[1].onclick = function(e) {
+        if (e && e.stopPropagation) e.stopPropagation();
+        self.toggleFavorite(handle);
+      };
+      self.favoritesContainerEl.appendChild(chip);
+    })(this.favorites[i]);
+  }
+};
+
+KindleDeckApp.prototype.initEventListeners = function() {
+  var self = this;
+
+  // Nav buttons
+  if (this.btnPrevEl) this.btnPrevEl.onclick = function() { self.prev(); };
+  if (this.btnNextEl) this.btnNextEl.onclick = function() { self.next(); };
+
+  // Tap zones
+  var tapPrev = document.getElementById('tap-prev');
+  var tapNext = document.getElementById('tap-next');
+  if (tapPrev) tapPrev.onclick = function() { self.prev(); };
+  if (tapNext) tapNext.onclick = function() { self.next(); };
+
+  // Clean button
+  var btnClean = document.getElementById('btn-clean');
+  if (btnClean) btnClean.onclick = function() { self.flushScreen(); };
+
+  // Star button
+  if (this.btnStarEl) this.btnStarEl.onclick = function() { self.toggleFavorite(self.currentHandle); };
+
+  // Menu button
+  var btnMenu = document.getElementById('btn-menu');
+  if (btnMenu) btnMenu.onclick = function() { self.openMenu(); };
+  if (this.profileTitleEl) this.profileTitleEl.onclick = function() { self.openMenu(); };
+
+  var btnCloseMenu = document.getElementById('btn-close-menu');
+  if (btnCloseMenu) btnCloseMenu.onclick = function() { self.closeMenu(); };
+
+  var btnLoadHandle = document.getElementById('btn-load-handle');
+  if (btnLoadHandle) {
+    btnLoadHandle.onclick = function() {
+      var input = document.getElementById('handle-input');
+      var val = input ? input.value.replace(/^@/, '').replace(/\s+/g, '') : '';
+      if (val) {
+        self.closeMenu();
+        self.loadProfile(val);
+      }
+    };
   }
 
-  initEventListeners() {
-    // Navigation Buttons
-    document.getElementById('btn-prev').addEventListener('click', () => this.prev());
-    document.getElementById('btn-next').addEventListener('click', () => this.next());
-
-    // Tap Zones
-    document.getElementById('tap-prev').addEventListener('click', () => this.prev());
-    document.getElementById('tap-next').addEventListener('click', () => this.next());
-
-    // Clean / Ghosting Flush Button
-    document.getElementById('btn-clean').addEventListener('click', () => this.flushScreen());
-
-    // Star Toggle
-    this.btnStarEl.addEventListener('click', () => this.toggleFavorite(this.currentHandle));
-
-    // Menu Controls
-    document.getElementById('btn-menu').addEventListener('click', () => this.openMenu());
-    this.profileTitleEl.addEventListener('click', () => this.openMenu());
-    document.getElementById('btn-close-menu').addEventListener('click', () => this.closeMenu());
-    document.getElementById('btn-load-handle').addEventListener('click', () => {
-      const input = document.getElementById('handle-input').value.trim().replace(/^@/, '');
-      if (input) {
-        this.closeMenu();
-        this.loadProfile(input);
-      }
-    });
-
-    // Quick Suggested Chips
-    document.querySelectorAll('.quick-chip').forEach(chip => {
-      chip.addEventListener('click', (e) => {
-        const handle = e.currentTarget.getAttribute('data-handle');
-        this.closeMenu();
-        this.loadProfile(handle);
-      });
-    });
-
-    // Image Toggle Button
-    this.btnToggleImgEl.addEventListener('click', () => {
-      if (this.mediaImgEl.style.display === 'block') {
-        this.mediaImgEl.style.display = 'none';
-        this.mediaAltEl.style.display = 'none';
-        this.btnToggleImgEl.textContent = '[📷 Show Image]';
-      } else {
-        this.mediaImgEl.style.display = 'block';
-        if (this.mediaAltEl.textContent) {
-          this.mediaAltEl.style.display = 'block';
+  // Quick suggested chips
+  var chips = document.querySelectorAll('.quick-chip');
+  for (var i = 0; i < chips.length; i++) {
+    (function(chip) {
+      chip.onclick = function() {
+        var handle = chip.getAttribute('data-handle');
+        if (handle) {
+          self.closeMenu();
+          self.loadProfile(handle);
         }
-        this.btnToggleImgEl.textContent = '[Hide Image]';
-      }
-    });
-
-    // Hardware Buttons / Keyboard Listeners
-    window.addEventListener('keydown', (e) => {
-      switch (e.key) {
-        case 'ArrowRight':
-        case 'PageDown':
-        case ' ':
-        case 'j':
-          e.preventDefault();
-          this.next();
-          break;
-        case 'ArrowLeft':
-        case 'PageUp':
-        case 'k':
-          e.preventDefault();
-          this.prev();
-          break;
-        case 'Home':
-          this.goTo(0);
-          break;
-        case 'c':
-        case 'r':
-          this.flushScreen();
-          break;
-      }
-    });
+      };
+    })(chips[i]);
   }
 
-  async loadProfile(handle) {
-    this.currentHandle = handle.replace(/^@/, '');
-    localStorage.setItem('kindle_x_handle', this.currentHandle);
-    this.profileTitleEl.textContent = `@${this.currentHandle}`;
-    this.updateStarButton();
-    this.tweets = [];
-    this.currentIndex = 0;
-    this.nextCursor = null;
-
-    this.authorNameEl.textContent = 'Loading...';
-    this.authorHandleEl.textContent = `@${this.currentHandle}`;
-    this.tweetDateEl.textContent = '';
-    this.metricsInfoEl.textContent = '';
-    this.partBadgeEl.style.display = 'none';
-    this.tweetTextEl.textContent = `Fetching tweets for @${this.currentHandle}...`;
-    this.pageIndicatorEl.textContent = '0 / 0';
-    this.quoteBoxEl.style.display = 'none';
-    this.mediaBoxEl.style.display = 'none';
-    this.updateNavButtons();
-
-    await this.fetchTweets();
-  }
-
-  async fetchTweets() {
-    if (this.isLoading) return;
-    this.isLoading = true;
-
-    try {
-      // Primary: Direct unauthenticated public API with CORS: *
-      // Fallback: Local companion proxy if running via companion
-      const isLocalCompanion = window.location.protocol === 'http:' && window.location.port !== '';
-      let url = isLocalCompanion 
-        ? `/api/profile/${encodeURIComponent(this.currentHandle)}`
-        : `https://api.fxtwitter.com/2/profile/${encodeURIComponent(this.currentHandle)}/statuses`;
-
-      if (this.nextCursor) {
-        url += (url.includes('?') ? '&' : '?') + `cursor=${encodeURIComponent(this.nextCursor)}`;
-      }
-
-      const res = await fetch(url);
-      if (!res.ok) {
-        if (isLocalCompanion) {
-          const directUrl = `https://api.fxtwitter.com/2/profile/${encodeURIComponent(this.currentHandle)}/statuses` + 
-            (this.nextCursor ? `?cursor=${encodeURIComponent(this.nextCursor)}` : '');
-          const directRes = await fetch(directUrl);
-          if (directRes.ok) {
-            const directData = await directRes.json();
-            this.handleData(directData);
-            return;
-          }
-        }
-        throw new Error(`HTTP ${res.status}`);
-      }
-
-      const data = await res.json();
-      this.handleData(data);
-    } catch (err) {
-      console.error('Fetch error:', err);
-      if (this.tweets.length === 0) {
-        this.authorNameEl.textContent = 'Notice';
-        this.authorHandleEl.textContent = `@${this.currentHandle}`;
-        this.tweetDateEl.textContent = '';
-        this.metricsInfoEl.textContent = 'Feed unavailable';
-        this.tweetTextEl.textContent = `Error loading @${this.currentHandle}: ${err.message}. Please check connection or try another handle.`;
-        this.updateNavButtons();
-      }
-    } finally {
-      this.isLoading = false;
-    }
-  }
-
-  handleData(data) {
-    if (!data.results || data.results.length === 0) {
-      if (this.tweets.length === 0) {
-        this.authorNameEl.textContent = `@${this.currentHandle}`;
-        this.tweetDateEl.textContent = '';
-        this.metricsInfoEl.textContent = '0 tweets';
-        this.tweetTextEl.textContent = `No tweets found for @${this.currentHandle}.`;
-        this.updateNavButtons();
-      }
-      return;
-    }
-
-    // Process tweets: Chunk long-form note tweets (> 750 chars) to strictly preserve zero-scroll
-    const processedCards = [];
-    data.results.forEach(tweet => {
-      const text = tweet.text || '';
-      if (text.length > 750) {
-        const chunks = this.chunkText(text, 650);
-        chunks.forEach((chunk, idx) => {
-          processedCards.push({
-            ...tweet,
-            text: chunk,
-            notePart: `${idx + 1}/${chunks.length}`,
-            quote: (idx === chunks.length - 1) ? tweet.quote : null,
-            media: (idx === 0) ? tweet.media : null
-          });
-        });
+  // Image toggle button
+  if (this.btnToggleImgEl) {
+    this.btnToggleImgEl.onclick = function() {
+      if (self.mediaImgEl.style.display === 'block') {
+        self.mediaImgEl.style.display = 'none';
+        if (self.mediaAltEl) self.mediaAltEl.style.display = 'none';
+        self.btnToggleImgEl.textContent = '[+ View Image]';
       } else {
-        processedCards.push(tweet);
+        self.mediaImgEl.style.display = 'block';
+        if (self.mediaAltEl && self.mediaAltEl.textContent) {
+          self.mediaAltEl.style.display = 'block';
+        }
+        self.btnToggleImgEl.textContent = '[- Hide Image]';
       }
-    });
+    };
+  }
 
-    this.tweets.push(...processedCards);
-    this.nextCursor = data.cursor ? data.cursor.bottom : null;
+  // Keyboard navigation & physical Oasis buttons
+  window.onkeydown = function(e) {
+    var key = e.key || e.keyCode;
+    if (key === 'ArrowRight' || key === 'PageDown' || key === ' ' || key === 'j' || key === 39 || key === 34 || key === 32) {
+      if (e.preventDefault) e.preventDefault();
+      self.next();
+    } else if (key === 'ArrowLeft' || key === 'PageUp' || key === 'k' || key === 37 || key === 33) {
+      if (e.preventDefault) e.preventDefault();
+      self.prev();
+    } else if (key === 'c' || key === 'r' || key === 67 || key === 82) {
+      self.flushScreen();
+    }
+  };
+};
 
-    if (this.tweets.length > 0 && this.currentIndex === 0) {
-      this.renderCurrentTweet();
+KindleDeckApp.prototype.loadProfile = function(handle) {
+  this.currentHandle = handle.replace(/^@/, '').replace(/\s+/g, '');
+  SafeStorage.set('kindle_x_handle', this.currentHandle);
+  if (this.profileTitleEl) this.profileTitleEl.textContent = '@' + this.currentHandle;
+  this.updateStarButton();
+  this.tweets = [];
+  this.currentIndex = 0;
+  this.nextCursor = null;
+
+  if (this.authorNameEl) this.authorNameEl.textContent = 'Loading...';
+  if (this.authorHandleEl) this.authorHandleEl.textContent = '@' + this.currentHandle;
+  if (this.tweetDateEl) this.tweetDateEl.textContent = '';
+  if (this.metricsInfoEl) this.metricsInfoEl.textContent = '';
+  if (this.partBadgeEl) this.partBadgeEl.style.display = 'none';
+  if (this.quoteBoxEl) this.quoteBoxEl.style.display = 'none';
+  if (this.mediaBoxEl) this.mediaBoxEl.style.display = 'none';
+  if (this.pageIndicatorEl) this.pageIndicatorEl.textContent = '0 / 0';
+  if (this.tweetTextEl) this.tweetTextEl.innerHTML = 'Connecting to X for @' + this.currentHandle + '...';
+  this.updateNavButtons();
+
+  this.fetchTweets();
+};
+
+KindleDeckApp.prototype.fetchTweets = function(callback) {
+  var self = this;
+  if (this.isLoading) return;
+  this.isLoading = true;
+
+  var handle = this.currentHandle;
+  var cursor = this.nextCursor;
+  var isLocal = (window.location.protocol === 'http:' && window.location.port !== '');
+
+  var primaryUrl = 'https://api.fxtwitter.com/2/profile/' + encodeURIComponent(handle) + '/statuses';
+  if (cursor) {
+    primaryUrl += '?cursor=' + encodeURIComponent(cursor);
+  }
+
+  function onComplete(data) {
+    self.isLoading = false;
+    self.handleData(data);
+    if (callback) callback(null, data);
+  }
+
+  function onError(err) {
+    self.isLoading = false;
+    console.error('Fetch error for @' + handle + ':', err);
+    if (self.tweets.length === 0) {
+      if (self.authorNameEl) self.authorNameEl.textContent = 'Notice';
+      if (self.authorHandleEl) self.authorHandleEl.textContent = '@' + handle;
+      if (self.tweetDateEl) self.tweetDateEl.textContent = '';
+      if (self.metricsInfoEl) self.metricsInfoEl.textContent = 'Feed unavailable';
+      if (self.tweetTextEl) {
+        self.tweetTextEl.innerHTML =
+          '<strong>Error loading @' + handle + ':</strong> ' + (err.message || 'Unknown network error') +
+          '<br><br>' +
+          '<button class="btn interactive-element" id="btn-retry" style="margin-right:10px;">↻ Retry</button>' +
+          '<button class="btn interactive-element" id="btn-try-sama">Try @sama</button>' +
+          '<button class="btn interactive-element" id="btn-try-elon" style="margin-left:10px;">Try @elonmusk</button>';
+
+        var retryBtn = document.getElementById('btn-retry');
+        if (retryBtn) retryBtn.onclick = function() { self.loadProfile(self.currentHandle); };
+        var samaBtn = document.getElementById('btn-try-sama');
+        if (samaBtn) samaBtn.onclick = function() { self.loadProfile('sama'); };
+        var elonBtn = document.getElementById('btn-try-elon');
+        if (elonBtn) elonBtn.onclick = function() { self.loadProfile('elonmusk'); };
+      }
+      self.updateNavButtons();
+    }
+    if (callback) callback(err);
+  }
+
+  // Primary: direct public API with open CORS
+  this.sendXHR(primaryUrl, 15000, onComplete, function(directErr) {
+    if (isLocal) {
+      var localUrl = '/api/profile/' + encodeURIComponent(handle);
+      if (cursor) localUrl += '?cursor=' + encodeURIComponent(cursor);
+      self.sendXHR(localUrl, 10000, onComplete, function() {
+        onError(directErr);
+      });
     } else {
-      this.updatePageIndicator();
+      onError(directErr);
+    }
+  });
+};
+
+KindleDeckApp.prototype.sendXHR = function(url, timeoutMs, onSuccess, onError) {
+  try {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.timeout = timeoutMs || 15000;
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState === 4) {
+        // Attempt to parse JSON response body
+        var json = null;
+        try {
+          if (xhr.responseText) {
+            json = JSON.parse(xhr.responseText);
+          }
+        } catch (pe) {}
+
+        // If body has valid tweets or success code, accept it regardless of edge status quirks
+        if (json && (json.code === 200 || (json.results && json.results.length > 0))) {
+          onSuccess(json);
+          return;
+        }
+
+        if (xhr.status >= 200 && xhr.status < 300 && json) {
+          onSuccess(json);
+          return;
+        }
+
+        onError(new Error('HTTP ' + xhr.status + (json && json.message ? ': ' + json.message : '')));
+      }
+    };
+    xhr.onerror = function() {
+      onError(new Error('Network error (connection dropped or blocked)'));
+    };
+    xhr.ontimeout = function() {
+      onError(new Error('Connection timed out'));
+    };
+    xhr.send();
+  } catch (ex) {
+    onError(new Error('XHR exception: ' + ex.message));
+  }
+};
+
+KindleDeckApp.prototype.handleData = function(data) {
+  if (!data || !data.results || data.results.length === 0) {
+    if (this.tweets.length === 0) {
+      if (this.authorNameEl) this.authorNameEl.textContent = '@' + this.currentHandle;
+      if (this.tweetDateEl) this.tweetDateEl.textContent = '';
+      if (this.metricsInfoEl) this.metricsInfoEl.textContent = '0 tweets';
+      if (this.tweetTextEl) this.tweetTextEl.textContent = 'No tweets found for @' + this.currentHandle + '.';
       this.updateNavButtons();
     }
+    return;
   }
 
-  chunkText(text, maxLen) {
-    const chunks = [];
-    let remaining = text;
-    while (remaining.length > 0) {
-      if (remaining.length <= maxLen) {
-        chunks.push(remaining.trim());
-        break;
+  var processedCards = [];
+  for (var i = 0; i < data.results.length; i++) {
+    var tweet = data.results[i];
+    var text = tweet.text || '';
+    if (text.length > 750) {
+      var chunks = this.chunkText(text, 650);
+      for (var c = 0; c < chunks.length; c++) {
+        var card = this.shallowClone(tweet);
+        card.text = chunks[c];
+        card.notePart = (c + 1) + '/' + chunks.length;
+        card.quote = (c === chunks.length - 1) ? tweet.quote : null;
+        card.media = (c === 0) ? tweet.media : null;
+        processedCards.push(card);
       }
-      let splitIdx = remaining.lastIndexOf('\n\n', maxLen);
-      if (splitIdx < 200) splitIdx = remaining.lastIndexOf('\n', maxLen);
-      if (splitIdx < 200) splitIdx = remaining.lastIndexOf(' ', maxLen);
-      if (splitIdx < 200) splitIdx = maxLen;
-
-      chunks.push(remaining.substring(0, splitIdx).trim());
-      remaining = remaining.substring(splitIdx).trim();
+    } else {
+      processedCards.push(tweet);
     }
-    return chunks;
   }
 
-  renderCurrentTweet() {
-    if (this.tweets.length === 0) return;
-    const tweet = this.tweets[this.currentIndex];
+  for (var p = 0; p < processedCards.length; p++) {
+    this.tweets.push(processedCards[p]);
+  }
 
-    // Author
-    this.authorNameEl.textContent = tweet.author?.name || this.currentHandle;
-    this.authorHandleEl.textContent = `@${tweet.author?.screen_name || this.currentHandle}`;
+  if (data.cursor && data.cursor.bottom) {
+    this.nextCursor = data.cursor.bottom;
+  } else {
+    this.nextCursor = null;
+  }
 
-    // Note Tweet Sub-Page Badge
+  if (this.tweets.length > 0 && this.currentIndex === 0) {
+    this.renderCurrentTweet();
+  } else {
+    this.updatePageIndicator();
+    this.updateNavButtons();
+  }
+};
+
+KindleDeckApp.prototype.shallowClone = function(obj) {
+  var copy = {};
+  for (var key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      copy[key] = obj[key];
+    }
+  }
+  return copy;
+};
+
+KindleDeckApp.prototype.chunkText = function(text, maxLen) {
+  var chunks = [];
+  var remaining = text;
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLen) {
+      chunks.push(remaining.trim());
+      break;
+    }
+    var splitIdx = remaining.lastIndexOf('\n\n', maxLen);
+    if (splitIdx < 200) splitIdx = remaining.lastIndexOf('\n', maxLen);
+    if (splitIdx < 200) splitIdx = remaining.lastIndexOf('. ', maxLen);
+    if (splitIdx < 200) splitIdx = remaining.lastIndexOf(' ', maxLen);
+    if (splitIdx < 200) splitIdx = maxLen;
+
+    chunks.push(remaining.substring(0, splitIdx).trim());
+    remaining = remaining.substring(splitIdx).trim();
+  }
+  return chunks;
+};
+
+KindleDeckApp.prototype.renderCurrentTweet = function() {
+  if (this.tweets.length === 0) return;
+  var tweet = this.tweets[this.currentIndex];
+
+  // Author
+  var authorName = (tweet.author && tweet.author.name) ? tweet.author.name : this.currentHandle;
+  var authorScreen = (tweet.author && tweet.author.screen_name) ? tweet.author.screen_name : this.currentHandle;
+  if (this.authorNameEl) this.authorNameEl.textContent = authorName;
+  if (this.authorHandleEl) this.authorHandleEl.textContent = '@' + authorScreen;
+
+  // Note Tweet Badge
+  if (this.partBadgeEl) {
     if (tweet.notePart) {
       this.partBadgeEl.style.display = 'inline-block';
-      this.partBadgeEl.textContent = `Part ${tweet.notePart}`;
+      this.partBadgeEl.textContent = 'Part ' + tweet.notePart;
     } else {
       this.partBadgeEl.style.display = 'none';
     }
+  }
 
-    // Date
+  // Date
+  if (this.tweetDateEl) {
     if (tweet.created_at) {
-      const d = new Date(tweet.created_at);
-      this.tweetDateEl.textContent = isNaN(d) ? tweet.created_at : d.toLocaleDateString();
+      var d = new Date(tweet.created_at);
+      this.tweetDateEl.textContent = isNaN(d.getTime()) ? tweet.created_at : d.toLocaleDateString();
     } else {
       this.tweetDateEl.textContent = '';
     }
+  }
 
-    // Body Text
+  // Body text
+  if (this.tweetTextEl) {
     this.tweetTextEl.textContent = tweet.text || '';
+  }
 
-    // Quoted Tweet
+  // Quoted tweet
+  if (this.quoteBoxEl) {
     if (tweet.quote) {
       this.quoteBoxEl.style.display = 'block';
-      this.quoteAuthorEl.textContent = `Quote: @${tweet.quote.author?.screen_name || 'user'}`;
-      this.quoteTextEl.textContent = tweet.quote.text || '';
+      var qScreen = (tweet.quote.author && tweet.quote.author.screen_name) ? tweet.quote.author.screen_name : 'user';
+      if (this.quoteAuthorEl) this.quoteAuthorEl.textContent = 'Quote: @' + qScreen;
+      if (this.quoteTextEl) this.quoteTextEl.textContent = tweet.quote.text || '';
     } else {
       this.quoteBoxEl.style.display = 'none';
     }
+  }
 
-    // Media (Photos)
-    const mediaList = tweet.media?.all || tweet.media?.photos || [];
+  // Media
+  var mediaList = (tweet.media && (tweet.media.all || tweet.media.photos)) || [];
+  if (this.mediaBoxEl) {
     if (mediaList.length > 0 && mediaList[0].url) {
       this.mediaBoxEl.style.display = 'block';
-      this.mediaImgEl.src = mediaList[0].url;
-      this.mediaImgEl.style.display = 'none';
-      this.btnToggleImgEl.textContent = '[📷 Show Image]';
-      if (mediaList[0].altText) {
-        this.mediaAltEl.textContent = mediaList[0].altText;
-        this.mediaAltEl.style.display = 'none';
-      } else {
-        this.mediaAltEl.textContent = '';
+      if (this.mediaImgEl) {
+        this.mediaImgEl.src = mediaList[0].url;
+        this.mediaImgEl.style.display = 'none';
+      }
+      if (this.btnToggleImgEl) this.btnToggleImgEl.textContent = '[+ View Image]';
+      if (this.mediaAltEl) {
+        if (mediaList[0].altText) {
+          this.mediaAltEl.textContent = mediaList[0].altText;
+        } else {
+          this.mediaAltEl.textContent = '';
+        }
         this.mediaAltEl.style.display = 'none';
       }
     } else {
       this.mediaBoxEl.style.display = 'none';
-      this.mediaImgEl.src = '';
-      this.mediaAltEl.textContent = '';
-    }
-
-    // Formatted Engagement Metrics
-    const likes = this.formatMetric(tweet.likes || 0);
-    const reposts = this.formatMetric(tweet.reposts || 0);
-    const replies = this.formatMetric(tweet.replies || 0);
-    this.metricsInfoEl.textContent = `${likes} Likes · ${reposts} Reposts · ${replies} Replies`;
-
-    this.updatePageIndicator();
-    this.updateNavButtons();
-
-    // Auto-prefetch when reaching 75% of buffer
-    if (this.nextCursor && this.currentIndex >= this.tweets.length - 5 && !this.isLoading) {
-      this.fetchTweets();
+      if (this.mediaImgEl) this.mediaImgEl.src = '';
+      if (this.mediaAltEl) this.mediaAltEl.textContent = '';
     }
   }
 
-  updateNavButtons() {
-    const btnPrev = document.getElementById('btn-prev');
-    const btnNext = document.getElementById('btn-next');
-
-    if (this.tweets.length === 0) {
-      btnPrev.style.opacity = '0.35';
-      btnPrev.style.pointerEvents = 'none';
-      btnNext.style.opacity = '0.35';
-      btnNext.style.pointerEvents = 'none';
-      return;
-    }
-
-    if (this.currentIndex === 0) {
-      btnPrev.style.opacity = '0.35';
-      btnPrev.style.pointerEvents = 'none';
-    } else {
-      btnPrev.style.opacity = '1';
-      btnPrev.style.pointerEvents = 'auto';
-    }
-
-    if (this.currentIndex >= this.tweets.length - 1 && !this.nextCursor) {
-      btnNext.style.opacity = '0.35';
-      btnNext.style.pointerEvents = 'none';
-    } else {
-      btnNext.style.opacity = '1';
-      btnNext.style.pointerEvents = 'auto';
-    }
+  // Formatted engagement metrics
+  if (this.metricsInfoEl) {
+    var likes = this.formatMetric(tweet.likes || 0);
+    var reposts = this.formatMetric(tweet.reposts || 0);
+    var replies = this.formatMetric(tweet.replies || 0);
+    this.metricsInfoEl.textContent = likes + ' Likes · ' + reposts + ' Reposts · ' + replies + ' Replies';
   }
 
-  formatMetric(num) {
-    if (!num || num <= 0) return '0';
-    if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
-    if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-    return String(num);
+  this.updatePageIndicator();
+  this.updateNavButtons();
+
+  // Prefetch when reaching near end
+  if (this.nextCursor && this.currentIndex >= this.tweets.length - 5 && !this.isLoading) {
+    this.fetchTweets();
+  }
+};
+
+KindleDeckApp.prototype.updateNavButtons = function() {
+  if (!this.btnPrevEl || !this.btnNextEl) return;
+  if (this.tweets.length === 0) {
+    this.btnPrevEl.style.opacity = '0.35';
+    this.btnPrevEl.style.pointerEvents = 'none';
+    this.btnNextEl.style.opacity = '0.35';
+    this.btnNextEl.style.pointerEvents = 'none';
+    return;
+  }
+  if (this.currentIndex === 0) {
+    this.btnPrevEl.style.opacity = '0.35';
+    this.btnPrevEl.style.pointerEvents = 'none';
+  } else {
+    this.btnPrevEl.style.opacity = '1';
+    this.btnPrevEl.style.pointerEvents = 'auto';
   }
 
-  updatePageIndicator() {
-    this.pageIndicatorEl.textContent = `${this.currentIndex + 1} / ${this.tweets.length}`;
+  if (this.currentIndex >= this.tweets.length - 1 && !this.nextCursor) {
+    this.btnNextEl.style.opacity = '0.35';
+    this.btnNextEl.style.pointerEvents = 'none';
+  } else {
+    this.btnNextEl.style.opacity = '1';
+    this.btnNextEl.style.pointerEvents = 'auto';
   }
+};
 
-  next() {
-    if (this.currentIndex < this.tweets.length - 1) {
-      this.currentIndex++;
-      this.renderCurrentTweet();
-    } else if (this.nextCursor && !this.isLoading) {
-      this.fetchTweets().then(() => {
-        if (this.currentIndex < this.tweets.length - 1) {
-          this.currentIndex++;
-          this.renderCurrentTweet();
-        }
-      });
-    }
+KindleDeckApp.prototype.formatMetric = function(num) {
+  if (!num || num <= 0) return '0';
+  if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  return String(num);
+};
+
+KindleDeckApp.prototype.updatePageIndicator = function() {
+  if (this.pageIndicatorEl) {
+    var total = this.tweets.length;
+    var current = total > 0 ? (this.currentIndex + 1) : 0;
+    this.pageIndicatorEl.textContent = current + ' / ' + total;
   }
+};
 
-  prev() {
-    if (this.currentIndex > 0) {
-      this.currentIndex--;
-      this.renderCurrentTweet();
-    }
+KindleDeckApp.prototype.next = function() {
+  var self = this;
+  if (this.currentIndex < this.tweets.length - 1) {
+    this.currentIndex++;
+    this.renderCurrentTweet();
+  } else if (this.nextCursor && !this.isLoading) {
+    this.fetchTweets(function() {
+      if (self.currentIndex < self.tweets.length - 1) {
+        self.currentIndex++;
+        self.renderCurrentTweet();
+      }
+    });
   }
+};
 
-  goTo(index) {
-    if (index >= 0 && index < this.tweets.length) {
-      this.currentIndex = index;
-      this.renderCurrentTweet();
-    }
+KindleDeckApp.prototype.prev = function() {
+  if (this.currentIndex > 0) {
+    this.currentIndex--;
+    this.renderCurrentTweet();
   }
+};
 
-  flushScreen() {
-    // Quick hardware inversion trigger to clear e-ink ghosting
-    document.body.style.backgroundColor = '#000000';
-    setTimeout(() => {
-      document.body.style.backgroundColor = '#FFFFFF';
-    }, 60);
+KindleDeckApp.prototype.goTo = function(index) {
+  if (index >= 0 && index < this.tweets.length) {
+    this.currentIndex = index;
+    this.renderCurrentTweet();
   }
+};
 
-  openMenu() {
-    this.menuModalEl.classList.add('active');
-    document.getElementById('handle-input').value = this.currentHandle;
+KindleDeckApp.prototype.flushScreen = function() {
+  document.body.style.backgroundColor = '#000000';
+  setTimeout(function() {
+    document.body.style.backgroundColor = '#FFFFFF';
+  }, 70);
+};
+
+KindleDeckApp.prototype.openMenu = function() {
+  if (this.menuModalEl) {
+    this.menuModalEl.className = 'active';
+    var inp = document.getElementById('handle-input');
+    if (inp) inp.value = this.currentHandle;
   }
+};
 
-  closeMenu() {
-    this.menuModalEl.classList.remove('active');
+KindleDeckApp.prototype.closeMenu = function() {
+  if (this.menuModalEl) {
+    this.menuModalEl.className = '';
+  }
+};
+
+// Start app safely on DOM ready or window load
+function initApp() {
+  if (!window.kindleDeck) {
+    window.kindleDeck = new KindleDeckApp();
   }
 }
 
-// Start app upon DOM ready
-window.addEventListener('DOMContentLoaded', () => {
-  window.kindleDeck = new KindleDeckApp();
-});
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+  initApp();
+} else {
+  if (document.addEventListener) {
+    document.addEventListener('DOMContentLoaded', initApp, false);
+    window.addEventListener('load', initApp, false);
+  } else if (window.attachEvent) {
+    window.attachEvent('onload', initApp);
+  }
+}
 </script>
 </body>
 </html>

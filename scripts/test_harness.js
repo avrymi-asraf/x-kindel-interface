@@ -95,7 +95,7 @@ async function run() {
 
   if (!readerTab) {
     console.log('[CDP] Creating new reader tab via PUT /json/new...');
-    const newTabRes = await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?file:///home/avreymi/code/x-kindel-interface/src/index.html`, { method: 'PUT' });
+    const newTabRes = await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?http://localhost:8080/index.html`, { method: 'PUT' });
     readerTab = await newTabRes.json();
   }
 
@@ -114,7 +114,7 @@ async function run() {
   console.log('\n--- Test 1: Initial Load & Rendering (@karpathy) ---');
   await client.eval(`localStorage.setItem('kindle_x_handle', 'karpathy')`);
   await client.send('Page.navigate', {
-    url: 'file:///home/avreymi/code/x-kindel-interface/src/index.html'
+    url: 'http://localhost:8080/index.html'
   });
   await sleep(2500);
 
