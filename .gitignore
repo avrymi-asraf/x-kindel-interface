@@ -1,0 +1,12 @@
+# Dependencies & caches
+node_modules/
+__pycache__/
+*.pyc
+
+# Chrome & local caches
+.config/
+test_artifacts/
+
+# System files
+.DS_Store
+Thumbs.db
