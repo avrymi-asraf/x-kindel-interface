@@ -47,6 +47,8 @@ Open `http://<your-computer-lan-ip>:8000` on your Kindle browser.
 | **Save/Remove Favorite** | Tap `[★]` or `[☆]` in the top bar |
 | **Flush Ghosting** | Tap `[Clean]` in top-right to trigger an intentional 60ms inversion |
 | **View Image** | Tap `[📷 Show Image]` on tweets with photos |
+| **Read Replies** | Tap `[💬 Read Replies (N)]` on tweet card, tap metrics, or press `r` |
+| **Back to Feed** | Tap `[← Back]` in top bar or press `b` / `Backspace` / `Escape` |
 
 ---
 

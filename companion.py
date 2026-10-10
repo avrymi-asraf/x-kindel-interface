@@ -28,6 +28,8 @@ class KindleHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         # Local proxy endpoint for older Kindles that fail HTTPS handshakes
         if self.path.startswith("/api/profile/"):
             self.handle_api_proxy()
+        elif self.path.startswith("/api/conversation/"):
+            self.handle_conversation_proxy()
         else:
             super().do_GET()
 
@@ -45,6 +47,36 @@ class KindleHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         try:
             with urllib.request.urlopen(req, timeout=12) as response:
+                content = response.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(content)
+        except urllib.error.HTTPError as e:
+            self.send_response(e.code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": f"Upstream HTTP {e.code}"}).encode())
+        except Exception as e:
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
+
+    def handle_conversation_proxy(self):
+        # Extract tweet id
+        path_parts = self.path[len("/api/conversation/"):].split("?")
+        tweet_id = path_parts[0].strip("/")
+
+        upstream_url = f"https://api.fxtwitter.com/2/conversation/{tweet_id}"
+        req = urllib.request.Request(
+            upstream_url,
+            headers={"User-Agent": "KindleCompanion/1.0 (+http://local.kindle)"}
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
                 content = response.read()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")

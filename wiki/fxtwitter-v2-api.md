@@ -66,6 +66,12 @@ The FxTwitter v2 API (`api.fxtwitter.com/2/`) is an open, unauthenticated REST A
 - **Path**: `GET /:handle/status/:id` (v1) or `GET /2/status/:id` (v2)
 - Returns complete metadata for a single tweet, including conversational context.
 
+#### C. Conversation & Replies
+- **Path**: `GET /2/conversation/{id}`
+- **Response Format**: Returns `{ "code": 200, "status": { ...root_tweet }, "replies": [ ...reply_tweets ] }`
+- Each reply object adheres to the standard status schema with `replying_to` field, full text, author, metrics, and media.
+- Supported with open CORS (`Access-Control-Allow-Origin: *`).
+
 ### 3. Integration Advantages for Kindle Interface
 1. **Zero Server Requirement**: Because `api.fxtwitter.com` supports CORS, a static HTML/JS file running in the Kindle browser can fetch directly without needing an intermediary backend server.
 2. **Built-in Pagination**: The `cursor.bottom` string provides seamless cursor-based pagination across infinite profile pages.

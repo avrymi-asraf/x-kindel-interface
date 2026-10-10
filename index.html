@@ -251,6 +251,26 @@
       padding-left: 8px;
     }
 
+    #reply-to-badge {
+      font-size: 16px;
+      font-style: italic;
+      color: #333333;
+      margin-left: 8px;
+      display: none;
+    }
+
+    /* Tweet Actions / Replies Box */
+    #actions-box {
+      margin-top: 10px;
+      margin-bottom: 8px;
+      flex-shrink: 0;
+    }
+
+    #btn-read-replies {
+      font-size: 18px;
+      padding: 4px 14px;
+    }
+
     /* Bottom Chrome: Physical navigation bar */
     #bottom-bar {
       display: flex;
@@ -434,6 +454,10 @@
       color: #FFFFFF;
     }
 
+    body.dark-mode #reply-to-badge {
+      color: #CCCCCC;
+    }
+
     body.dark-mode #tweet-date {
       color: #CCCCCC;
     }
@@ -533,6 +557,7 @@
   <!-- Top Bar -->
   <header id="top-bar">
     <div class="header-left">
+      <button class="btn" id="btn-back" style="display:none;" aria-label="Back to feed">← Back</button>
       <button class="btn" id="btn-menu" aria-label="Open accounts menu">≡ Search / Lists</button>
       <span id="profile-title" class="interactive-element">@karpathy</span>
       <button class="btn" id="btn-star" title="Save/remove favorite">☆</button>
@@ -559,6 +584,7 @@
           <span id="author-name">Connecting...</span>
           <span id="author-handle">@...</span>
           <span id="part-badge">1/1</span>
+          <span id="reply-to-badge">Replying to @...</span>
         </div>
         <div id="tweet-date">--:--</div>
       </div>
@@ -576,6 +602,11 @@
         <button class="btn" id="btn-toggle-img">[+ View Image]</button>
         <img id="media-img" alt="Tweet media attachment">
         <div id="media-alt"></div>
+      </div>
+
+      <!-- Tweet Actions / Replies -->
+      <div id="actions-box" class="interactive-element">
+        <button class="btn" id="btn-read-replies">[💬 Read Replies]</button>
       </div>
     </article>
   </main>
@@ -712,11 +743,18 @@ function KindleDeckApp() {
   this.profileTitleEl = document.getElementById('profile-title');
   this.metricsInfoEl = document.getElementById('metrics-info');
   this.menuModalEl = document.getElementById('menu-modal');
+  this.btnMenuEl = document.getElementById('btn-menu');
+  this.btnBackEl = document.getElementById('btn-back');
   this.btnStarEl = document.getElementById('btn-star');
+  this.replyToBadgeEl = document.getElementById('reply-to-badge');
+  this.actionsBoxEl = document.getElementById('actions-box');
+  this.btnReadRepliesEl = document.getElementById('btn-read-replies');
   this.favoritesContainerEl = document.getElementById('favorites-container');
   this.listsContainerEl = document.getElementById('lists-container');
   this.btnPrevEl = document.getElementById('btn-prev');
   this.btnNextEl = document.getElementById('btn-next');
+  this.isRepliesMode = false;
+  this.navigationStack = [];
 
   this.applyTheme();
   this.initEventListeners();
@@ -846,6 +884,11 @@ KindleDeckApp.prototype.renderLists = function() {
 };
 
 KindleDeckApp.prototype.updateStarButton = function() {
+  if (this.isRepliesMode) {
+    if (this.btnStarEl) this.btnStarEl.style.display = 'none';
+    return;
+  }
+  if (this.btnStarEl) this.btnStarEl.style.display = 'inline-block';
   if (this.isListMode) {
     if (this.btnStarEl) this.btnStarEl.textContent = '★';
     return;
@@ -1032,6 +1075,21 @@ KindleDeckApp.prototype.initEventListeners = function() {
     };
   }
 
+  // Back button (from replies to feed)
+  if (this.btnBackEl) {
+    this.btnBackEl.onclick = function() { self.popNavigation(); };
+  }
+
+  // Read replies button
+  if (this.btnReadRepliesEl) {
+    this.btnReadRepliesEl.onclick = function() { self.readReplies(); };
+  }
+
+  // Tap metrics info to read replies
+  if (this.metricsInfoEl) {
+    this.metricsInfoEl.onclick = function() { self.readReplies(); };
+  }
+
   // Keyboard navigation & physical Oasis buttons
   window.onkeydown = function(e) {
     // Never intercept keys when typing inside an input field or when menu drawer is open
@@ -1048,7 +1106,15 @@ KindleDeckApp.prototype.initEventListeners = function() {
     } else if (key === 'ArrowLeft' || key === 'PageUp' || key === 'k' || key === 37 || key === 33) {
       if (e.preventDefault) e.preventDefault();
       self.prev();
-    } else if (key === 'c' || key === 'r' || key === 67 || key === 82) {
+    } else if (key === 'r' || key === 'R' || key === 82) {
+      if (e.preventDefault) e.preventDefault();
+      self.readReplies();
+    } else if (key === 'b' || key === 'B' || key === 'Backspace' || key === 'Escape' || key === 8 || key === 27 || key === 66) {
+      if (self.isRepliesMode) {
+        if (e.preventDefault) e.preventDefault();
+        self.popNavigation();
+      }
+    } else if (key === 'c' || key === 'C' || key === 67) {
       self.flushScreen();
     } else if (key === 'd' || key === 'D' || key === 68) {
       self.toggleTheme();
@@ -1171,6 +1237,10 @@ KindleDeckApp.prototype.renderSearchResults = function(query, data) {
 
 KindleDeckApp.prototype.loadProfile = function(handle) {
   this.isListMode = false;
+  this.isRepliesMode = false;
+  this.navigationStack = [];
+  if (this.btnBackEl) this.btnBackEl.style.display = 'none';
+  if (this.btnMenuEl) this.btnMenuEl.style.display = 'inline-block';
   this.currentHandle = handle.replace(/^@/, '').replace(/\s+/g, '');
   SafeStorage.set('kindle_x_active_mode', 'profile');
   SafeStorage.set('kindle_x_handle', this.currentHandle);
@@ -1185,8 +1255,10 @@ KindleDeckApp.prototype.loadProfile = function(handle) {
   if (this.tweetDateEl) this.tweetDateEl.textContent = '';
   if (this.metricsInfoEl) this.metricsInfoEl.textContent = '';
   if (this.partBadgeEl) this.partBadgeEl.style.display = 'none';
+  if (this.replyToBadgeEl) this.replyToBadgeEl.style.display = 'none';
   if (this.quoteBoxEl) this.quoteBoxEl.style.display = 'none';
   if (this.mediaBoxEl) this.mediaBoxEl.style.display = 'none';
+  if (this.actionsBoxEl) this.actionsBoxEl.style.display = 'none';
   if (this.pageIndicatorEl) this.pageIndicatorEl.textContent = '0 / 0';
   if (this.tweetTextEl) this.tweetTextEl.innerHTML = 'Connecting to X for @' + this.currentHandle + '...';
   this.updateNavButtons();
@@ -1197,6 +1269,10 @@ KindleDeckApp.prototype.loadProfile = function(handle) {
 KindleDeckApp.prototype.loadList = function(listName, handles) {
   var self = this;
   this.isListMode = true;
+  this.isRepliesMode = false;
+  this.navigationStack = [];
+  if (this.btnBackEl) this.btnBackEl.style.display = 'none';
+  if (this.btnMenuEl) this.btnMenuEl.style.display = 'inline-block';
   this.currentListName = listName;
   this.currentListHandles = handles;
   SafeStorage.set('kindle_x_active_mode', 'list');
@@ -1214,8 +1290,10 @@ KindleDeckApp.prototype.loadList = function(listName, handles) {
   if (this.tweetDateEl) this.tweetDateEl.textContent = '';
   if (this.metricsInfoEl) this.metricsInfoEl.textContent = '';
   if (this.partBadgeEl) this.partBadgeEl.style.display = 'none';
+  if (this.replyToBadgeEl) this.replyToBadgeEl.style.display = 'none';
   if (this.quoteBoxEl) this.quoteBoxEl.style.display = 'none';
   if (this.mediaBoxEl) this.mediaBoxEl.style.display = 'none';
+  if (this.actionsBoxEl) this.actionsBoxEl.style.display = 'none';
   if (this.pageIndicatorEl) this.pageIndicatorEl.textContent = '0 / 0';
   if (this.tweetTextEl) {
     this.tweetTextEl.innerHTML = 'Fetching list <strong>' + listName + '</strong> (' + handles.join(', ') + ')...';
@@ -1524,6 +1602,26 @@ KindleDeckApp.prototype.renderCurrentTweet = function() {
     }
   }
 
+  // Replying To Badge
+  if (this.replyToBadgeEl) {
+    if (tweet.replying_to && tweet.replying_to.screen_name) {
+      this.replyToBadgeEl.textContent = 'Replying to @' + tweet.replying_to.screen_name;
+      this.replyToBadgeEl.style.display = 'inline-block';
+    } else {
+      this.replyToBadgeEl.style.display = 'none';
+    }
+  }
+
+  // Read Replies Action Button
+  if (this.actionsBoxEl && this.btnReadRepliesEl) {
+    this.actionsBoxEl.style.display = 'block';
+    if (typeof tweet.replies === 'number') {
+      this.btnReadRepliesEl.textContent = '[💬 Read Replies (' + this.formatMetric(tweet.replies) + ')]';
+    } else {
+      this.btnReadRepliesEl.textContent = '[💬 Read Replies]';
+    }
+  }
+
   // Formatted engagement metrics
   if (this.metricsInfoEl) {
     var likes = this.formatMetric(tweet.likes || 0);
@@ -1536,8 +1634,189 @@ KindleDeckApp.prototype.renderCurrentTweet = function() {
   this.updateNavButtons();
 
   // Prefetch when reaching near end in profile mode
-  if (!this.isListMode && this.nextCursor && this.currentIndex >= this.tweets.length - 5 && !this.isLoading) {
+  if (!this.isListMode && !this.isRepliesMode && this.nextCursor && this.currentIndex >= this.tweets.length - 5 && !this.isLoading) {
     this.fetchTweets();
+  }
+};
+
+KindleDeckApp.prototype.readReplies = function() {
+  if (this.isLoading) return;
+  if (this.tweets.length === 0) return;
+  var tweet = this.tweets[this.currentIndex];
+  if (!tweet || !tweet.id) return;
+
+  var self = this;
+  var tweetId = tweet.id;
+  var authorScreen = (tweet.author && tweet.author.screen_name) ? tweet.author.screen_name : this.currentHandle;
+
+  // Push current view onto navigation stack
+  if (!this.navigationStack) {
+    this.navigationStack = [];
+  }
+  this.navigationStack.push({
+    tweets: this.tweets,
+    currentIndex: this.currentIndex,
+    currentHandle: this.currentHandle,
+    isListMode: this.isListMode,
+    currentListName: this.currentListName,
+    currentListHandles: this.currentListHandles,
+    nextCursor: this.nextCursor,
+    profileTitle: this.profileTitleEl ? this.profileTitleEl.textContent : '',
+    isRepliesMode: this.isRepliesMode
+  });
+
+  this.isRepliesMode = true;
+  this.isLoading = true;
+
+  // Update UI to loading replies state
+  if (this.btnBackEl) this.btnBackEl.style.display = 'inline-block';
+  if (this.btnMenuEl) this.btnMenuEl.style.display = 'none';
+  if (this.btnStarEl) this.btnStarEl.style.display = 'none';
+  if (this.profileTitleEl) this.profileTitleEl.textContent = 'Replies (' + authorScreen + ')';
+
+  if (this.authorNameEl) this.authorNameEl.textContent = 'Loading Replies...';
+  if (this.authorHandleEl) this.authorHandleEl.textContent = '@' + authorScreen;
+  if (this.tweetDateEl) this.tweetDateEl.textContent = '';
+  if (this.metricsInfoEl) this.metricsInfoEl.textContent = 'Fetching conversation...';
+  if (this.partBadgeEl) this.partBadgeEl.style.display = 'none';
+  if (this.replyToBadgeEl) this.replyToBadgeEl.style.display = 'none';
+  if (this.quoteBoxEl) this.quoteBoxEl.style.display = 'none';
+  if (this.mediaBoxEl) this.mediaBoxEl.style.display = 'none';
+  if (this.actionsBoxEl) this.actionsBoxEl.style.display = 'none';
+  if (this.pageIndicatorEl) this.pageIndicatorEl.textContent = '0 / 0';
+  if (this.tweetTextEl) {
+    this.tweetTextEl.innerHTML = 'Fetching replies for @' + authorScreen + ' post #' + tweetId + '...';
+  }
+  this.updateNavButtons();
+
+  var isLocal = (window.location.protocol === 'http:' && window.location.port !== '');
+  var primaryUrl = 'https://api.fxtwitter.com/2/conversation/' + encodeURIComponent(tweetId);
+
+  function onRepliesLoaded(data) {
+    self.isLoading = false;
+    var repliesList = (data && data.replies) ? data.replies : [];
+    if (repliesList.length === 0) {
+      self.tweets = [];
+      self.currentIndex = 0;
+      if (self.authorNameEl) self.authorNameEl.textContent = 'No Replies';
+      if (self.authorHandleEl) self.authorHandleEl.textContent = '@' + authorScreen;
+      if (self.tweetTextEl) {
+        self.tweetTextEl.innerHTML = '<strong>No replies found for this post.</strong><br><br>' +
+          '<button class="btn interactive-element" id="btn-back-from-empty">← Back to Post</button>';
+        var emptyBackBtn = document.getElementById('btn-back-from-empty');
+        if (emptyBackBtn) {
+          emptyBackBtn.onclick = function() { self.popNavigation(); };
+        }
+      }
+      if (self.metricsInfoEl) self.metricsInfoEl.textContent = '0 replies';
+      self.updateNavButtons();
+      return;
+    }
+
+    self.tweets = [];
+    self.currentIndex = 0;
+    self.nextCursor = null;
+
+    // Process replies with chunkText for long note tweets
+    var processedCards = [];
+    for (var i = 0; i < repliesList.length; i++) {
+      var rep = repliesList[i];
+      var text = rep.text || '';
+      if (text.length > 750) {
+        var chunks = self.chunkText(text, 650);
+        for (var c = 0; c < chunks.length; c++) {
+          var card = self.shallowClone(rep);
+          card.text = chunks[c];
+          card.notePart = (c + 1) + '/' + chunks.length;
+          card.quote = (c === chunks.length - 1) ? rep.quote : null;
+          card.media = (c === 0) ? rep.media : null;
+          processedCards.push(card);
+        }
+      } else {
+        processedCards.push(rep);
+      }
+    }
+
+    self.tweets = processedCards;
+    self.renderCurrentTweet();
+  }
+
+  function onRepliesError(err) {
+    self.isLoading = false;
+    console.error('Failed to load replies for post #' + tweetId + ':', err);
+    if (self.authorNameEl) self.authorNameEl.textContent = 'Notice';
+    if (self.authorHandleEl) self.authorHandleEl.textContent = '@' + authorScreen;
+    if (self.tweetTextEl) {
+      self.tweetTextEl.innerHTML = '<strong>Error loading replies:</strong> ' + (err.message || 'Network error') +
+        '<br><br>' +
+        '<button class="btn interactive-element" id="btn-retry-replies" style="margin-right:10px;">↻ Retry</button>' +
+        '<button class="btn interactive-element" id="btn-back-from-err">← Back to Post</button>';
+      var retryBtn = document.getElementById('btn-retry-replies');
+      if (retryBtn) {
+        retryBtn.onclick = function() {
+          self.popNavigation();
+          self.readReplies();
+        };
+      }
+      var backBtn = document.getElementById('btn-back-from-err');
+      if (backBtn) {
+        backBtn.onclick = function() { self.popNavigation(); };
+      }
+    }
+    if (self.metricsInfoEl) self.metricsInfoEl.textContent = 'Failed to load replies';
+    self.updateNavButtons();
+  }
+
+  self.sendXHR(primaryUrl, 15000, onRepliesLoaded, function(directErr) {
+    if (isLocal) {
+      var localUrl = '/api/conversation/' + encodeURIComponent(tweetId);
+      self.sendXHR(localUrl, 12000, onRepliesLoaded, function() {
+        onRepliesError(directErr);
+      });
+    } else {
+      onRepliesError(directErr);
+    }
+  });
+};
+
+KindleDeckApp.prototype.popNavigation = function() {
+  if (!this.navigationStack || this.navigationStack.length === 0) {
+    this.isRepliesMode = false;
+    if (this.btnBackEl) this.btnBackEl.style.display = 'none';
+    if (this.btnMenuEl) this.btnMenuEl.style.display = 'inline-block';
+    this.loadProfile(this.currentHandle);
+    return;
+  }
+
+  var prev = this.navigationStack.pop();
+  this.tweets = prev.tweets;
+  this.currentIndex = prev.currentIndex;
+  this.currentHandle = prev.currentHandle;
+  this.isListMode = prev.isListMode;
+  this.currentListName = prev.currentListName;
+  this.currentListHandles = prev.currentListHandles;
+  this.nextCursor = prev.nextCursor;
+  this.isRepliesMode = prev.isRepliesMode || false;
+
+  if (this.isRepliesMode) {
+    if (this.btnBackEl) this.btnBackEl.style.display = 'inline-block';
+    if (this.btnMenuEl) this.btnMenuEl.style.display = 'none';
+    if (this.btnStarEl) this.btnStarEl.style.display = 'none';
+  } else {
+    if (this.btnBackEl) this.btnBackEl.style.display = 'none';
+    if (this.btnMenuEl) this.btnMenuEl.style.display = 'inline-block';
+    if (this.btnStarEl) this.btnStarEl.style.display = 'inline-block';
+  }
+
+  if (this.profileTitleEl) {
+    this.profileTitleEl.textContent = prev.profileTitle;
+  }
+  this.updateStarButton();
+
+  if (this.tweets.length > 0) {
+    this.renderCurrentTweet();
+  } else {
+    this.loadProfile(this.currentHandle);
   }
 };
 
@@ -1587,7 +1866,7 @@ KindleDeckApp.prototype.next = function() {
   if (this.currentIndex < this.tweets.length - 1) {
     this.currentIndex++;
     this.renderCurrentTweet();
-  } else if (!this.isListMode && this.nextCursor && !this.isLoading) {
+  } else if (!this.isListMode && !this.isRepliesMode && this.nextCursor && !this.isLoading) {
     this.fetchTweets(function() {
       if (self.currentIndex < self.tweets.length - 1) {
         self.currentIndex++;
