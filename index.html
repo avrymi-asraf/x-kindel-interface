@@ -839,6 +839,13 @@ KindleDeckApp.prototype.initEventListeners = function() {
 
   // Keyboard navigation & physical Oasis buttons
   window.onkeydown = function(e) {
+    // Never intercept keys when typing inside an input field or when menu drawer is open
+    var target = e.target || e.srcElement;
+    var tag = (target && target.tagName) ? target.tagName.toLowerCase() : '';
+    if (tag === 'input' || tag === 'textarea' || (self.menuModalEl && self.menuModalEl.className === 'active')) {
+      return;
+    }
+
     var key = e.key || e.keyCode;
     if (key === 'ArrowRight' || key === 'PageDown' || key === ' ' || key === 'j' || key === 39 || key === 34 || key === 32) {
       if (e.preventDefault) e.preventDefault();
